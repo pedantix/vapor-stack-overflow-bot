@@ -3,37 +3,69 @@ import Foundation
 import FluentPostgreSQL
 import Fluent
 
+private typealias Questions = [StackOverflowQuestion]
+
 struct StackOverflowService: Service {
     let client: Client
     let stackOverflowUrlService: StackOverflowUrlService
     let decoder: DataDecoder
+    let connectionPool: DatabaseConnectionPool<ConfiguredDatabase<PostgreSQLDatabase>>
 
-    func getNewStackOverflowQuestions(tag: String, req: Request) -> Future<[StackOverflowQuestion]> {
+    func getNewStackOverflowQuestions(tag: String) -> Future<[StackOverflowQuestion]> {
+        return connectionPool.withConnection { connection in
+            self.getQuestions(tag: tag, on: connection)
+        }
+    }
+
+    private func getQuestions(tag: String, on connection: PostgreSQLConnection) -> EventLoopFuture<Questions> {
+        return self.getNewQuestionsFromStackOverflow(tag: tag)
+            .flatMap { questionsFromClient in
+                let foundQuestionIds = questionsFromClient.map { $0.questionId }
+                return self.matchingQuestions(foundQuestionIds, connection: connection)
+                    .map({ questionsFromDatabase in
+                        return self.filterForNewQuestionsAndPersist(
+                            questionsFromDatabase: questionsFromDatabase,
+                            questionsFromClient: questionsFromClient,
+                            connection: connection
+                        )
+                    })
+
+        }
+    }
+
+    private func getNewQuestionsFromStackOverflow(tag: String) -> EventLoopFuture<[StackOverflowQuestion]> {
         let url = stackOverflowUrlService.requestForQuestions(for: "vapor", timeAgo: 6 * 60 * 60)
         return client
             .get(url)
-            .map(to: [StackOverflowQuestion].self) { response in
-            let data = response.http.body.data ?? Data()
-            return try self.decoder.decode(StackOverflowQuestionContainer.self,
-                                            from: data).items
-        }.flatMap { questionsFromClient in
-            let foundQuestionIds = questionsFromClient.map { $0.questionId }
-            return StackOverflowQuestion
-                .query(on: req)
-                .filter(\.questionId ~~ foundQuestionIds)
-                .all()
-                .map({ questionsFromDatabase in
-                    let dbQuestionIds = questionsFromDatabase.map { $0.questionId }
-                    var sb = Set(foundQuestionIds)
-                    sb.subtract(Set(dbQuestionIds))
-                    return questionsFromClient
-                        .filter { question in sb.contains(question.questionId) }
-                        .map {
-                            _ = $0.save(on: req)
-                            return $0
-                    }
-            })
+            .map(to: [StackOverflowQuestion].self, self.decodeResponseData)
+    }
 
+    private func decodeResponseData(_ response: Response) throws -> Questions {
+        let data = response.http.body.data ?? Data()
+        return try self.decoder.decode(StackOverflowQuestionContainer.self,
+                                       from: data).items
+    }
+
+    private func matchingQuestions(_ foundQuestionIds: [Int], connection: PostgreSQLConnection) -> EventLoopFuture<Questions> {
+        return StackOverflowQuestion
+            .query(on: connection)
+            .filter(\.questionId ~~ foundQuestionIds)
+            .all()
+    }
+
+    private func filterForNewQuestionsAndPersist(
+        questionsFromDatabase: Questions,
+        questionsFromClient: Questions,
+        connection: PostgreSQLConnection
+    ) -> Questions {
+        let foundQuestionIds = questionsFromClient.map { $0.questionId }
+        let dbQuestionIds = questionsFromDatabase.map { $0.questionId }
+        let sb = Set(foundQuestionIds).subtracting(Set(dbQuestionIds))
+        return questionsFromClient
+            .filter { question in sb.contains(question.questionId) }
+            .map {
+                _ = $0.save(on: connection)
+                return $0
         }
     }
 }
@@ -41,9 +73,11 @@ struct StackOverflowService: Service {
 extension StackOverflowService: ServiceType {
     static func makeService(for worker: Container) throws -> StackOverflowService {
         let jsonDecoder = try worker.make(ContentCoders.self).requireDataDecoder(for: .json)
+        let connectionPool = try worker.connectionPool(to: .psql)
         return try StackOverflowService(client: worker.make(),
                                         stackOverflowUrlService: worker.make(),
-                                        decoder: jsonDecoder)
+                                        decoder: jsonDecoder,
+                                        connectionPool: connectionPool)
     }
 }
 

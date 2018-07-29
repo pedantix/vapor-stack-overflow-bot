@@ -10,6 +10,6 @@ final class StackOverflowQuestionController {
     // TODO: Remove me
     func newStackOverflowQuestions(_ req: Request) throws -> Future<[StackOverflowQuestion]> {
         let newRequestObj = try req.make(StackOverflowService.self)
-        return newRequestObj.getNewStackOverflowQuestions(tag: "vapor", req: req)
+        return newRequestObj.getNewStackOverflowQuestions(tag: "vapor")
     }
 }
