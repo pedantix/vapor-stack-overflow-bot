@@ -28,7 +28,7 @@ final class StackoverflowCommand: Command {
         context: CommandContext
     ) throws -> EventLoopFuture<Void> {
         let newRequestObj = try context.container.make(StackOverflowService.self)
-        return newRequestObj.getNewStackOverflowQuestions(tag: "vapor").flatMap { questions in
+        return newRequestObj.getNewStackOverflowQuestions(tag: tag).flatMap { questions in
            return try self.postNewQuestions(questions, context: context)
         }
     }
