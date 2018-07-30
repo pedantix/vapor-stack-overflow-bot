@@ -28,12 +28,19 @@ final class StackoverflowCommand: Command {
         context: CommandContext
     ) throws -> EventLoopFuture<Void> {
         let newRequestObj = try context.container.make(StackOverflowService.self)
-        let webhookService = try context.container.make(DiscordWebhookService.self)
-        return newRequestObj.getNewStackOverflowQuestions(tag: "vapor").map { questions in
+        return newRequestObj.getNewStackOverflowQuestions(tag: "vapor").flatMap { questions in
+           return try self.postNewQuestions(questions, context: context)
+        }
+    }
 
-            try questions.forEach {
-                _ = try webhookService.postContent($0.link)
-            }
+
+    private func postNewQuestions(_ newQuestions: [StackOverflowQuestion], context: CommandContext) throws -> EventLoopFuture<Void> {
+        let webhookService = try context.container.make(DiscordWebhookService.self)
+        var questions = newQuestions
+        guard let postingQuestion = questions.popLast()
+            else { return .done(on:context.container) }
+        return try webhookService.postContent(postingQuestion.link).flatMap { _ in
+            return try self.postNewQuestions(questions, context: context)
         }
     }
 }
