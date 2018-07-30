@@ -33,8 +33,8 @@ struct StackOverflowService: Service {
         }
     }
 
-    private func getNewQuestionsFromStackOverflow(tag: String) -> EventLoopFuture<[StackOverflowQuestion]> {
-        let url = stackOverflowUrlService.requestForQuestions(for: "vapor", timeAgo: 6 * 60 * 60)
+    private func getNewQuestionsFromStackOverflow(tag: String) -> EventLoopFuture<Questions> {
+        let url = stackOverflowUrlService.requestForQuestions(for: tag)
         return client
             .get(url)
             .map(to: [StackOverflowQuestion].self, self.decodeResponseData)
@@ -46,7 +46,10 @@ struct StackOverflowService: Service {
                                        from: data).items
     }
 
-    private func matchingQuestions(_ foundQuestionIds: [Int], connection: PostgreSQLConnection) -> EventLoopFuture<Questions> {
+    private func matchingQuestions(
+        _ foundQuestionIds: [Int],
+        connection: PostgreSQLConnection
+    ) -> EventLoopFuture<Questions> {
         return StackOverflowQuestion
             .query(on: connection)
             .filter(\.questionId ~~ foundQuestionIds)
@@ -60,9 +63,9 @@ struct StackOverflowService: Service {
     ) -> Questions {
         let foundQuestionIds = questionsFromClient.map { $0.questionId }
         let dbQuestionIds = questionsFromDatabase.map { $0.questionId }
-        let sb = Set(foundQuestionIds).subtracting(Set(dbQuestionIds))
+        let unsavedQuestions = Set(foundQuestionIds).subtracting(Set(dbQuestionIds))
         return questionsFromClient
-            .filter { question in sb.contains(question.questionId) }
+            .filter { question in unsavedQuestions.contains(question.questionId) }
             .map {
                 _ = $0.save(on: connection)
                 return $0

@@ -22,11 +22,20 @@ public func configure(_ config: inout Config, _ env: inout Environment, _ servic
     migrations.add(model: StackOverflowQuestion.self, database: .psql)
     services.register(migrations)
 
-
     configureDatabase(&services)
 
-
     services.register(StackOverflowUrlService.self)
+
+    guard let webhookUrl = ProcessInfo.processInfo.environment["WEBHOOK_URL"]
+        else { fatalError("No Webhook URL") }
+
+    let discordWebhookServiceConfig = DiscordWebhookServiceConfig(webhookUrl: webhookUrl)
+    services.register(discordWebhookServiceConfig)
+    services.register(DiscordWebhookService.self)
+    var commandConfig = CommandConfig.default()
+    commandConfig.use(StackoverflowCommand(), as: "stackoverflow")
+
+    services.register(commandConfig)
 }
 
 private func configureDatabase(_ services: inout Services) {
@@ -49,7 +58,6 @@ private func configureDatabase(_ services: inout Services) {
     }
 
     let database = PostgreSQLDatabase(config: databaseConfig)
-
     var databasesConfig = DatabasesConfig()
     databasesConfig.add(database: database,
                         as: .psql)
