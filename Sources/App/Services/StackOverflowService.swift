@@ -22,7 +22,7 @@ struct StackOverflowService: Service {
             .flatMap { questionsFromClient in
                 let foundQuestionIds = questionsFromClient.map { $0.questionId }
                 return self.matchingQuestions(foundQuestionIds, connection: connection)
-                    .map({ questionsFromDatabase in
+                    .flatMap({ questionsFromDatabase in
                         return self.filterForNewQuestionsAndPersist(
                             questionsFromDatabase: questionsFromDatabase,
                             questionsFromClient: questionsFromClient,
@@ -60,16 +60,15 @@ struct StackOverflowService: Service {
         questionsFromDatabase: Questions,
         questionsFromClient: Questions,
         connection: PostgreSQLConnection
-    ) -> Questions {
+    ) -> EventLoopFuture<Questions> {
         let foundQuestionIds = questionsFromClient.map { $0.questionId }
         let dbQuestionIds = questionsFromDatabase.map { $0.questionId }
         let unsavedQuestions = Set(foundQuestionIds).subtracting(Set(dbQuestionIds))
         return questionsFromClient
             .filter { question in unsavedQuestions.contains(question.questionId) }
-            .map {
-                _ = $0.save(on: connection)
-                return $0
-        }
+            .map { question -> Future<StackOverflowQuestion>  in
+                return question.save(on: connection)
+        }.flatten(on: connection)
     }
 }
 
