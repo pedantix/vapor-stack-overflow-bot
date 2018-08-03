@@ -1,4 +1,5 @@
 import Vapor
+import FluentPostgreSQL
 
 final class StackoverflowCommand: Command {
     var arguments: [CommandArgument] {
@@ -40,7 +41,18 @@ final class StackoverflowCommand: Command {
         guard let postingQuestion = questions.popLast()
             else { return .done(on:context.container) }
         return try webhookService.postContent(postingQuestion.link).flatMap { _ in
-            return try self.postNewQuestions(questions, context: context)
+            return try self.postNewQuestions(questions, context: context).catchFlatMap { err in
+                if let err = err as? DiscordError {
+                    return self.deleteUnpostedQuestion(err.link, context: context)
+                }
+                return .done(on: context.container)
+            }
+        }
+    }
+
+    private func deleteUnpostedQuestion(_ link: String, context: CommandContext) -> Future<Void>{
+        return context.container.withPooledConnection(to: .psql) { (conn) -> EventLoopFuture<Void> in
+             return StackOverflowQuestion.query(on: conn).filter(\.link == link).delete()
         }
     }
 }
